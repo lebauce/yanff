@@ -9,6 +9,7 @@ import (
 	"github.com/intel-go/yanff/common"
 	"github.com/intel-go/yanff/flow"
 	"github.com/intel-go/yanff/packet"
+	"os"
 	"sync"
 	"time"
 )
@@ -45,6 +46,9 @@ var (
 	loggedDelete int = 0
 	loggedPri2PubLookup int = 0
 	loggedPub2PriLookup int = 0
+
+	Fpriin, Fpubin        *os.File
+	Fpriout, Fpubout      *os.File
 )
 
 func init() {
@@ -92,9 +96,28 @@ func PublicToPrivateTranslation(pkt *packet.Packet, ctx flow.UserContext) bool {
 	if pkt.Ether.EtherType == packet.SwapBytesUint16(common.IPV4Number) {
 		pkt.ParseIPv4()
 		l4offset = (pkt.IPv4.VersionIhl & 0x0f) << 2
+	} else if debug && pkt.Ether.EtherType == packet.SwapBytesUint16(common.ARPNumber) {
+		if Fpubin != nil {
+			Fpubin.Close()
+		}
+		Fpubin, _ = os.Create("pubin.pcap")
+		flow.WritePcapGlobalHdr(Fpubin)
+		flow.WritePcapOnePacket(pkt, Fpubin)
+
+		if Fpubout != nil {
+			Fpubout.Close()
+		}
+		Fpubout, _ = os.Create("pubout.pcap")
+		flow.WritePcapGlobalHdr(Fpubout)
+
+		return false
 	} else {
 		// We don't currently support anything except for IPv4
 		return false
+	}
+
+	if debug {
+		flow.WritePcapOnePacket(pkt, Fpubin)
 	}
 
 	// Create a lookup key
@@ -168,6 +191,10 @@ func PublicToPrivateTranslation(pkt *packet.Packet, ctx flow.UserContext) bool {
 			// Only address is not modified in ICMP packets
 		}
 
+		if debug {
+			flow.WritePcapOnePacket(pkt, Fpubout)
+		}
+
 		return true
 	}
 }
@@ -180,9 +207,28 @@ func PrivateToPublicTranslation(pkt *packet.Packet, ctx flow.UserContext) bool {
 	if pkt.Ether.EtherType == packet.SwapBytesUint16(common.IPV4Number) {
 		pkt.ParseIPv4()
 		l4offset = (pkt.IPv4.VersionIhl & 0x0f) << 2
+	} else if debug && pkt.Ether.EtherType == packet.SwapBytesUint16(common.ARPNumber) {
+		if Fpriin != nil {
+			Fpriin.Close()
+		}
+		Fpriin, _ = os.Create("priin.pcap")
+		flow.WritePcapGlobalHdr(Fpriin)
+		flow.WritePcapOnePacket(pkt, Fpriin)
+
+		if Fpriout != nil {
+			Fpriout.Close()
+		}
+		Fpriout, _ = os.Create("priout.pcap")
+		flow.WritePcapGlobalHdr(Fpriout)
+
+		return false
 	} else {
 		// We don't currently support anything except for IPv4
 		return false
+	}
+
+	if debug {
+		flow.WritePcapOnePacket(pkt, Fpriin)
 	}
 
 	// Create a lookup key
@@ -209,7 +255,8 @@ func PrivateToPublicTranslation(pkt *packet.Packet, ctx flow.UserContext) bool {
 	var value Tuple
 	v, found := pri2pubTable[protocol].Load(pri2pubKey)
 	if !found {
-		value, err := allocateNewEgressConnection(protocol, pri2pubKey,
+		var err error
+		value, err = allocateNewEgressConnection(protocol, pri2pubKey,
 			Natconfig.PublicPort.Subnet.Addr)
 
 		if err != nil {
@@ -276,6 +323,10 @@ func PrivateToPublicTranslation(pkt *packet.Packet, ctx flow.UserContext) bool {
 		pkt.UDP.SrcPort = packet.SwapBytesUint16(value.port)
 	} else {
 		// Only address is not modified in ICMP packets
+	}
+
+	if debug {
+		flow.WritePcapOnePacket(pkt, Fpriout)
 	}
 
 	return true

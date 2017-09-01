@@ -21,6 +21,7 @@ const (
 // Supported EtherType for L2
 const (
 	IPV4Number = 0x0800
+	ARPNumber  = 0x0806
 	IPV6Number = 0x86dd
 )
 
